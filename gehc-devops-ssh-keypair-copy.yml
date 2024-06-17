@@ -1,0 +1,252 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Copy Target account Keypair to Secops bucket
+Parameters:
+ KeyPairLambdaVersion:
+    Description: The KeyPair copy Lambda version 
+    Type: String
+    Default: 1.0.20200203070929
+Resources:
+  #
+  # KeyPair Bucket
+  #
+  KeyPairBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName:
+        Fn::Sub: gehc-devops-accounts-keys
+      VersioningConfiguration:
+        Status: Suspended
+  #
+  # Bucket Policy
+  #  
+  KeyPairBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: KeyPairUpdateLambdaRole
+    Properties:
+      Bucket:
+        Ref: KeyPairBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Sid: AllowAccessToKeyPairBucket
+            Action:
+              - s3:Get*
+              - s3:List*
+              - s3:Put*
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub arn:aws:iam::855289730729:role/bu-admin
+                - !Sub arn:aws:iam::855289730729:role/gehc-devops
+                - !GetAtt KeyPairUpdateLambdaRole.Arn
+            Resource:
+              - !Sub arn:aws:s3:::${KeyPairBucket}
+              - !Sub arn:aws:s3:::${KeyPairBucket}/*
+  #
+  # KeyPair copy Lambda Role
+  #  
+  KeyPairUpdateLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+              AWS: 
+               !Sub "arn:aws:iam::463534201013:root"
+            Action: ['sts:AssumeRole']            
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSCloudFormationReadOnlyAccess'
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: InitialPermissions
+                Effect: Allow
+                Action: 
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:PutRetentionPolicy
+                Resource: "*"
+              - Sid: S3ObjectPermissions
+                Effect: Allow
+                Action:
+                  - s3:List*
+                  - s3:PutObjectAcl
+                  - s3:PutObject
+                  - s3:Get*
+                Resource: "*"
+                  
+  #
+  # KeyPair copy Lambda Function
+  #   
+  KeyPaiLambdaFunction:
+    DependsOn: KeyPairUpdateLambdaRole
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: 
+        S3Bucket:  
+          !Sub  gehc-${AWS::Region}-855289730729-devops-artifacts
+        S3Key: !Sub GEHC-DevOps-Infra/devops_ssh_keypair-copy-lambda/devops_ssh_keypair-copy-lambda.${KeyPairLambdaVersion}.zip
+      FunctionName: !Sub gehc-devops-ssh-keypair-copy-lambda
+      Handler: index.handler
+      Role:
+        Fn::GetAtt: KeyPairUpdateLambdaRole.Arn
+      Runtime: python3.6
+      Timeout: 60
+  #
+  # KeyPair copy Invoke Permission
+  #   
+  KeyPairLambdaPermissions:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt KeyPaiLambdaFunction.Arn
+      Principal: 'apigateway.amazonaws.com'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${KeyPairAPI}/*/*/{service+}'
+  #
+  # KayPair copy API
+  #  
+  KeyPairAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      ApiKeySourceType: HEADER
+      Description: "Rest API for to copy Keypair from target accounts to Secops account."
+      EndpointConfiguration:
+        Types:
+          - EDGE
+      Name: "CopyKeyPairAPI"
+      Body:
+        swagger: "2.0"
+        info:
+          version: "2018-11-13T09:26:05Z"
+          title: "CopyKeyPairAPI"
+        basePath: "/CopyKeyPair"
+        schemes:
+        - "https"
+        paths:
+          /{service+}:
+            x-amazon-apigateway-any-method:
+              consumes:
+              - "application/json"
+              produces:
+              - "application/json"
+              parameters:
+              - name: "service"
+                in: "path"
+                required: true
+                type: "string"
+              - in: "body"
+                name: "RequestBodyModel"
+                required: true
+                schema:
+                  $ref: "#/definitions/RequestBodyModel"
+              responses: {}
+              security:
+              - api_key: []
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${KeyPaiLambdaFunction.Arn}/invocations"
+                responses:
+                  default:
+                    statusCode: "200"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                cacheNamespace: "jkl4v5"
+                cacheKeyParameters:
+                - "method.request.path.service"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+        securityDefinitions:
+          api_key:
+            type: "apiKey"
+            name: "x-api-key"
+            in: "header"
+        definitions:
+          RequestBodyModel:
+            type: "object"
+            required:
+            - "targetbucket"
+            properties:
+              targetbucket:
+                type: "array"
+                title: "The Targetbucket Schema"
+                items:
+                  type: "string"
+                  title: "The Items Schema"
+                  default: ""                                    
+            title: "The Root Schema"
+  #
+  # KeyPair Stage 
+  #   
+  KeyPairStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: CopyKeyPair
+      Description: Copy Key Pair
+      RestApiId: !Ref KeyPairAPI
+      DeploymentId: !Ref KeyPairDeployment
+      Variables:
+        Stack: CopyKeyPair
+      MethodSettings:
+        - ResourcePath: /service
+          HttpMethod: POST
+          MetricsEnabled: 'true'
+          DataTraceEnabled: 'true'
+          ThrottlingBurstLimit: '999'
+  #
+  # KeyPairAPI Deploy
+  #   
+  KeyPairDeployment: 
+    Type: AWS::ApiGateway::Deployment
+    Properties: 
+      RestApiId: !Ref KeyPairAPI
+      Description: "Copy KeyPair deployment"
+      StageName: KeyPairStage 
+  #
+  # API Key
+  #
+  KeyPairAPIKey:
+    Type: AWS::ApiGateway::ApiKey
+    DependsOn:
+      - KeyPairAPI
+      - KeyPairStage
+      - KeyPairDeployment
+    Properties: 
+      Description: "Copy KeyPair API Key."
+      Enabled: true
+  #
+  # API Usage Plan
+  #  
+  KeyPairAPIUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      Description: "Copy KeyPair API Usage Plan."
+      ApiStages:
+        - ApiId: !Ref KeyPairAPI
+          Stage: !Ref KeyPairStage
+      Throttle:
+        BurstLimit: 100
+        RateLimit: 20
+  #
+  # API Usage Plan Key
+  #  
+  KeyPairAPIUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    DependsOn: KeyPairAPIUsagePlan
+    Properties:
+      KeyId: !Ref KeyPairAPIKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref KeyPairAPIUsagePlan 
+Outputs:
+  KeyPairAPIEndpointURL:
+    Description: >-
+      Public API for Stack Update for CopyKeyPair for new Target account  
+    Value:
+      Fn::Sub: https://${KeyPairAPI}.execute-api.${AWS::Region}.amazonaws.com/${KeyPairStage}

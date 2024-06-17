@@ -1,0 +1,44 @@
+File: devops-config
+
+Version: 1.0
+#test
+BasicVars:
+   build_type: python
+   package_type: zip
+   artifact_version: '1.0' # Only increment the first two values(major/minor). Never decrement.
+   aws_region: 'eu-west-1'
+   aws_vpc_id: '451491398710' # NUMERIC AWS account ID
+   stack_base_name:       # base name of your stack(without the dev-, test-, prdge- prefix
+   stack_param_name:       # Name of the param you want to be updated in stack.
+   aws_upload_files: . #
+   repo_url: https://github.build.ge.com/GEHC-DevOps-Infra/devops_ssh_keypair-copy-lambda.git
+   custom_pre_commands: 
+   custom_post_commands: #
+   enable_gitflow_cd: false
+   custom_gitflow: false
+
+PythonVars:
+   python_publish: false  # Will deploy to artifactory under python-ge repository if true. Defaults to false
+   python_runtime_version: "3.6" # only other acceptable value is "2.7" DO NOT ATTEMPT TO USE ANYTHING ELSE
+   #python_repo: #STRING URL of the py repo to use at build time. Defaults to https://pypi.python.org/simple + http://internal-jfrog-1269719551.us-east-1.elb.amazonaws.com/api/pypi/python-ge/simple. If set, the latter is replaced with theprovided URL.
+   python_validate_list:  #STRING ant regex format. The list will be examined for *.py files and validated with "python -m py_compile". By default all .py files will be validated under project folder.
+   #python_artifactory_repo: #STRING repository name. The python deployment stage will upload the artifact into this repository. Defaults to: python-ge
+   #python_publish_base_version: #BOOLEAN <true|false> Use BasicVars: artifact_version when publishing to Artifactory (without timestamp) Useful for custom (manual) verioning requirements.
+
+
+SonarVars:
+   aws_run_sonar: false
+   sonar_additional_args:
+   sonar_server: enterprise
+   
+DockerVars:
+  docker_additional_args: "ARTIFACT_VERSION=${ARTIFACT_VERSION}"
+
+TestingVars:
+   test_component_command:  #shell command to trigger your component tests
+   test_contract_command: #shell command to trigger your contract tests
+   test_unit_command: #the shell command to trigger your unit tests(most likely grunt)
+   test_integration_command: #shell command to trigger your integration test
+
+DeployVars:
+  skip_aws_deploy: true # Deploy to AWSFile: devops-config
